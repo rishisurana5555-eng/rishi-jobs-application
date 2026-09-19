@@ -27,7 +27,7 @@ BLACK = (0, 0, 0)
 LINE_GAP = 15.0                   # template leading (pt)
 BOTTOM_LIMIT = 785.0              # lowest baseline allowed above the "Page N" footer
 MIN_PARA_GAP = 17.0               # tightest paragraph spacing allowed when compressing
-TITLE_TOP_SPACE = LINE_GAP        # blank line above the agreement title on page 1
+HEADER_SPACE = LINE_GAP           # blank line between the Rishi Jobs logo and the page text
 
 # --------------------------------------------------------------------------- #
 # Business options
@@ -400,6 +400,8 @@ class ContractGenerator:
     # -- public ------------------------------------------------------------ #
     def generate(self, details: ContractDetails) -> bytes:
         doc = fitz.open(self.template_path)
+        for page in doc:
+            self._add_header_space(doc, page)
         self.details = details
         date_text = format_contract_date(details.contract_date)
         self.placeholders = {
@@ -485,6 +487,26 @@ class ContractGenerator:
         for l in next_lines:
             ts.draw_original_line(tw, l, l.y + shift)
         tw.write_text(next_page, color=BLACK)
+
+    @staticmethod
+    def _add_header_space(doc, page):
+        """Move all page text and tables down one line, below the logo.
+
+        The template draws the background artwork and the "Page N" footer first, inside
+        one q...Q block; everything after it is the page body, which gets wrapped in a
+        downward translation so the artwork and footer stay where they are.
+        """
+        xrefs = page.get_contents()
+        stream = b"\n".join(doc.xref_stream(x) for x in xrefs)
+        marker = re.search(rb"\(Page \d+\) Tj T\* ET\s*Q\s*", stream)
+        if not marker:
+            return
+        cut = marker.end()
+        stream = (stream[:cut] + b"q 1 0 0 1 0 %.2f cm\n" % -HEADER_SPACE
+                  + stream[cut:] + b"\nQ\n")
+        doc.update_stream(xrefs[0], stream)
+        for x in xrefs[1:]:
+            doc.update_stream(x, b"")
 
     # -- page classification ---------------------------------------------- #
     @staticmethod
@@ -575,12 +597,11 @@ class ContractGenerator:
         items.sort(key=lambda it: it[2])
 
         new_tops = []
-        top_space = TITLE_TOP_SPACE if page.number == 0 else 0.0
-        shift_started = top_space > 0
+        shift_started = False
         eligible = []
         for i, it in enumerate(items):
             if i == 0:
-                new_tops.append(it[2] + top_space)
+                new_tops.append(it[2])
             else:
                 prev = items[i - 1]
                 gap = it[2] - prev[3]
@@ -745,7 +766,7 @@ class ContractGenerator:
     # -- signature page ---------------------------------------------------- #
     SIG_TABLE_X = (57.6378, 297.6378, 537.6378)   # same column grid as the template's tables
     SIG_CELL_PAD = 8.0
-    SIG_SIGN_ROW = 95.0                           # blank space for signature & stamp
+    SIG_SIGN_ROW = 80.0                           # blank space for signature & stamp
 
     def _fill_signature_table(self, page, lines):
         """Re-lay the two signature blocks as a bordered two-column table."""
@@ -786,6 +807,7 @@ class ContractGenerator:
         blocks = [[[], []], [[], []]]      # blocks[row][col] -> list of items
         sign_space = [False, False]
         row = 0
+        sign_line = "_" * 28
         for r in rows:
             if r is None:
                 row = 1
@@ -796,7 +818,7 @@ class ContractGenerator:
                     blocks[row][col].append(ts.wrap(ts.words_from_runs(cell), size, width))
 
         def column_height(items, with_sign):
-            h = self.SIG_SIGN_ROW if with_sign else 0.0
+            h = self.SIG_SIGN_ROW + item_gap if with_sign else 0.0
             for i, item in enumerate(items):
                 h += (item_gap if i else 0.0) + (len(item) - 1) * line_lead
             return h + size + 2 * cell_pad_y
@@ -816,7 +838,9 @@ class ContractGenerator:
             for col_x, items in zip((x0, mid), blocks[i]):
                 y = row_y[i] + cell_pad_y + size * 0.8
                 if sign_space[i]:
-                    y += self.SIG_SIGN_ROW
+                    y += self.SIG_SIGN_ROW                 # room to sign & stamp, then the line
+                    ts.draw_words(tw, [[(sign_line, "n")]], col_x + pad, y, size, False, width)
+                    y += item_gap
                 for item in items:
                     for j, words in enumerate(item):
                         ts.draw_words(tw, words, col_x + pad, y + j * line_lead, size, False, width)

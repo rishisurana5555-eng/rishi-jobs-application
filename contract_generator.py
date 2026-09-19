@@ -691,8 +691,7 @@ class ContractGenerator:
     # -- signature page ---------------------------------------------------- #
     SIG_TABLE_X = (57.6378, 297.6378, 537.6378)   # same column grid as the template's tables
     SIG_CELL_PAD = 8.0
-    SIG_ROW_MIN = 26.0                            # row height of the template's other tables
-    SIG_SIGN_ROW = 62.0                           # blank space for signature & stamp
+    SIG_SIGN_ROW = 55.0                           # blank space for signature & stamp
 
     def _fill_signature_table(self, page, lines):
         """Re-lay the two signature blocks as a bordered two-column table."""
@@ -724,41 +723,47 @@ class ContractGenerator:
                               text=fitz.PDF_REDACT_TEXT_REMOVE)
 
         ts = Typesetter(self.fonts, 0, page.rect.width)
-        lead = 13.0
-        layout, y = [], top_y
-        for row in rows:
-            if row is None:
-                layout.append((y, self.SIG_SIGN_ROW, None))
-                y += self.SIG_SIGN_ROW
-                continue
-            wrapped = [ts.wrap(ts.words_from_runs(cell), size, width) if cell else []
-                       for cell in row]
-            n = max(1, *(len(w) for w in wrapped))
-            h = max(self.SIG_ROW_MIN, (n - 1) * lead + self.SIG_ROW_MIN)
-            layout.append((y, h, wrapped))
-            y += h
+        line_lead, item_gap, cell_pad_y = 13.0, 20.0, 12.0
 
-        grey, fill = (0.6, 0.6, 0.6), (0.941176, 0.941176, 0.941176)
+        # two blocks per column: "Signed for and on behalf of ..." and the signatory block
+        blocks = [[[], []], [[], []]]      # blocks[row][col] -> list of items
+        sign_space = [False, False]
+        row = 0
+        for r in rows:
+            if r is None:
+                row = 1
+                sign_space[1] = True
+                continue
+            for col, cell in enumerate(r):
+                if cell:
+                    blocks[row][col].append(ts.wrap(ts.words_from_runs(cell), size, width))
+
+        def column_height(items, with_sign):
+            h = self.SIG_SIGN_ROW if with_sign else 0.0
+            for i, item in enumerate(items):
+                h += (item_gap if i else 0.0) + (len(item) - 1) * line_lead
+            return h + size + 2 * cell_pad_y
+
+        heights = [max(column_height(blocks[i][c], sign_space[i]) for c in (0, 1)) for i in (0, 1)]
+        row_y = [top_y, top_y + heights[0], top_y + heights[0] + heights[1]]
+
         shape = page.new_shape()
-        shape.draw_rect(fitz.Rect(x0, layout[0][0], x1, layout[0][0] + layout[0][1]))
-        shape.finish(color=None, fill=fill, width=0)             # header row shading
-        for row_y, _, _ in layout:
-            shape.draw_line((x0, row_y), (x1, row_y))
-        shape.draw_line((x0, y), (x1, y))
-        for x in (x0, mid, x1):
-            shape.draw_line((x, top_y), (x, y))
-        shape.finish(color=grey, width=0.75)
+        shape.draw_rect(fitz.Rect(x0, row_y[0], x1, row_y[2]))
+        shape.draw_line((x0, row_y[1]), (x1, row_y[1]))
+        shape.draw_line((mid, row_y[0]), (mid, row_y[2]))
+        shape.finish(color=(0.6, 0.6, 0.6), width=0.75)
         shape.commit()
 
         tw = fitz.TextWriter(page.rect)
-        cap = size * 0.36                                          # half the cap height
-        for row_y, h, wrapped in layout:
-            if wrapped is None:
-                continue
-            for col_x, cell in zip((x0, mid), wrapped):
-                first = row_y + h / 2 - (len(cell) - 1) * lead / 2 + cap
-                for i, words in enumerate(cell):
-                    ts.draw_words(tw, words, col_x + pad, first + i * lead, size, False, width)
+        for i in (0, 1):
+            for col_x, items in zip((x0, mid), blocks[i]):
+                y = row_y[i] + cell_pad_y + size * 0.8
+                if sign_space[i]:
+                    y += self.SIG_SIGN_ROW
+                for item in items:
+                    for j, words in enumerate(item):
+                        ts.draw_words(tw, words, col_x + pad, y + j * line_lead, size, False, width)
+                    y += (len(item) - 1) * line_lead + item_gap
         tw.write_text(page, color=BLACK)
 
     @staticmethod

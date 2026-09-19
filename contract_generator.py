@@ -56,8 +56,12 @@ GSTIN_RE = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 
 
 def fee_cell_lines(fee_type: str) -> list[str]:
-    """Split the fee option label into the lines shown in the fee table cell."""
-    return [re.sub(r"\s+", " ", part).strip() for part in FEE_TYPES[fee_type].split("|")]
+    """Split the fee option label into the lines shown in the fee table cell.
+
+    The "Tiered:" / "Flat:" prefix is only for the form and is left out of the contract.
+    """
+    label = re.sub(r"^\s*(Tiered|Flat)\s*:\s*", "", FEE_TYPES[fee_type], flags=re.I)
+    return [re.sub(r"\s+", " ", part).strip() for part in label.split("|")]
 
 
 def format_contract_date(d: date) -> str:
@@ -417,7 +421,7 @@ class ContractGenerator:
             if not lines:
                 continue
             if self._is_signature_page(lines):
-                self._fill_inline(page, lines, max_right=lambda s: 290 if s.x0 < 297 else 540)
+                self._fill_signature_table(page, lines)
             elif page.number == doc.page_count - 1:
                 if details.fill_information_sheet:
                     self._fill_information_sheet(page, lines)
@@ -685,25 +689,76 @@ class ContractGenerator:
                 ts.draw_words(tw, words, s.x0, y + dy + i * LINE_GAP, s.size, False, width)
 
     # -- signature page ---------------------------------------------------- #
-    def _fill_inline(self, page, lines, max_right):
-        jobs = []
-        for line in lines:
-            for s in line.spans:
-                key = " ".join(s.text.split())
-                if s.color == PLACEHOLDER_COLOR and key in self.placeholders:
-                    jobs.append((s, line.y, self.placeholders[key]))
-        if not jobs:
-            return
-        for s, _, _ in jobs:
-            page.add_redact_annot(fitz.Rect(s.x0 + 0.5, s.bbox.y0 + 3, s.x1 - 0.5, s.bbox.y1 - 3),
-                                  fill=False)
+    SIG_TABLE_X = (57.6378, 297.6378, 537.6378)   # same column grid as the template's tables
+    SIG_CELL_PAD = 8.0
+    SIG_ROW_MIN = 26.0                            # row height of the template's other tables
+    SIG_SIGN_ROW = 62.0                           # blank space for signature & stamp
+
+    def _fill_signature_table(self, page, lines):
+        """Re-lay the two signature blocks as a bordered two-column table."""
+        start = next(i for i, l in enumerate(lines)
+                     if any("Signed for and on behalf" in s.text for s in l.spans))
+        block = lines[start:]
+        size = block[0].size
+        x0, mid, x1 = self.SIG_TABLE_X
+        pad = self.SIG_CELL_PAD
+        width = mid - x0 - 2 * pad
+
+        rows = []   # each row: None (signature space) or [left pieces, right pieces]
+        for line in block:
+            if all(set(s.text.strip()) <= {"_"} for s in line.spans):
+                rows.append(None)
+                continue
+            cells = []
+            for side in ([s for s in line.spans if s.x0 < mid - 1],
+                         [s for s in line.spans if s.x0 >= mid - 1]):
+                pieces, _ = self._substitute_runs([(s.text, s.style, s.color) for s in side])
+                cells.append(pieces)
+            rows.append(cells)
+
+        top_y = block[0].bbox.y0 - 4
+        area = fitz.Rect(40, top_y - 1, page.rect.width - 40, block[-1].bbox.y1 + 2)
+        page.add_redact_annot(area, fill=False)
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
                               graphics=fitz.PDF_REDACT_LINE_ART_NONE,
                               text=fitz.PDF_REDACT_TEXT_REMOVE)
+
         ts = Typesetter(self.fonts, 0, page.rect.width)
+        lead = 13.0
+        layout, y = [], top_y
+        for row in rows:
+            if row is None:
+                layout.append((y, self.SIG_SIGN_ROW, None))
+                y += self.SIG_SIGN_ROW
+                continue
+            wrapped = [ts.wrap(ts.words_from_runs(cell), size, width) if cell else []
+                       for cell in row]
+            n = max(1, *(len(w) for w in wrapped))
+            h = max(self.SIG_ROW_MIN, (n - 1) * lead + self.SIG_ROW_MIN)
+            layout.append((y, h, wrapped))
+            y += h
+
+        grey, fill = (0.6, 0.6, 0.6), (0.941176, 0.941176, 0.941176)
+        shape = page.new_shape()
+        shape.draw_rect(fitz.Rect(x0, layout[0][0], x1, layout[0][0] + layout[0][1]))
+        shape.finish(color=None, fill=fill, width=0)             # header row shading
+        for row_y, _, _ in layout:
+            shape.draw_line((x0, row_y), (x1, row_y))
+        shape.draw_line((x0, y), (x1, y))
+        for x in (x0, mid, x1):
+            shape.draw_line((x, top_y), (x, y))
+        shape.finish(color=grey, width=0.75)
+        shape.commit()
+
         tw = fitz.TextWriter(page.rect)
-        for s, y, value in jobs:
-            self._draw_fitted(tw, ts, value, s.x0, y, s.size, max_right(s) - s.x0)
+        cap = size * 0.36                                          # half the cap height
+        for row_y, h, wrapped in layout:
+            if wrapped is None:
+                continue
+            for col_x, cell in zip((x0, mid), wrapped):
+                first = row_y + h / 2 - (len(cell) - 1) * lead / 2 + cap
+                for i, words in enumerate(cell):
+                    ts.draw_words(tw, words, col_x + pad, first + i * lead, size, False, width)
         tw.write_text(page, color=BLACK)
 
     @staticmethod
@@ -722,14 +777,6 @@ class ContractGenerator:
             if len(wrapped) <= max_lines or s <= min_size:
                 return s, wrapped
             s -= 0.25
-
-    def _draw_fitted(self, tw, ts, value, x, y, size, width):
-        """Signature block value: bold, on the template baseline (centred on it if wrapped)."""
-        s, wrapped = self._fit(ts, value, "b", width, size, max_lines=2, min_size=7.5)
-        lead = s * 1.12
-        top = y - (len(wrapped) - 1) * lead / 2
-        for i, wline in enumerate(wrapped):
-            ts.draw_words(tw, wline, x, top + i * lead, s, False, width)
 
     # -- client information sheet (last page) ------------------------------ #
     def _fill_information_sheet(self, page, lines):

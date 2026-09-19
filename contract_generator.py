@@ -462,7 +462,10 @@ class ContractGenerator:
             pos = 0
             for m in self.term_pattern.finditer(text):
                 out.append((text[pos:m.start()], style))
-                out.append((self.term_values[m.group(0)], "b"))
+                # only the first mention in a paragraph is bold (clause 4 mentions it twice)
+                bold = self._terms_seen == 0
+                self._terms_seen += 1
+                out.append((self.term_values[m.group(0)], "b" if bold else style))
                 pos = m.end()
                 changed = True
             out.append((text[pos:], style))
@@ -495,6 +498,7 @@ class ContractGenerator:
 
         any_change = False
         for par in paragraphs:
+            self._terms_seen = 0
             runs, changed = self._substitute_runs(self._paragraph_runs(par))
             if not changed:
                 continue
@@ -591,6 +595,7 @@ class ContractGenerator:
 
     def _keep_line_breaks(self, par: Paragraph, ts: Typesetter, right: float):
         """Substitute line by line, keeping the template's line breaks, if everything fits."""
+        self._terms_seen = 0
         result = []
         for line in par.lines:
             runs = [(s.text, s.style, s.color) for s in line.spans]
@@ -715,6 +720,7 @@ class ContractGenerator:
             cells = []
             for side in ([s for s in line.spans if s.x0 < mid - 1],
                          [s for s in line.spans if s.x0 >= mid - 1]):
+                self._terms_seen = 0
                 pieces, _ = self._substitute_runs([(s.text, s.style, s.color) for s in side])
                 if side and side[0].x0 >= mid - 1:     # Rishi Jobs column stays regular weight
                     pieces = [(t, "n") for t, _ in pieces]

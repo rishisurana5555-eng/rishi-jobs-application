@@ -412,9 +412,10 @@ class ContractGenerator:
             "[DESIGNATION]": details.signatory_designation,
         }
         # contract wording that depends on the chosen replacement period
-        self.text_replacements = {
-            "Ninety (90) Days": f"{REPLACEMENT_DAYS[details.replacement_days]} Days",
+        self.term_values = {
+            "Ninety (90)": REPLACEMENT_DAYS[details.replacement_days],
         }
+        self.term_pattern = re.compile(r"Ninety \(90\)(?= Days)")
 
         for page in doc:
             lines = extract_lines(page)
@@ -457,12 +458,15 @@ class ContractGenerator:
                     out.append((self.placeholders[key], "b"))
                     changed = True
                     continue
-            new = text
-            for old, rep in self.text_replacements.items():
-                new = new.replace(old, rep)
-            changed |= new != text
-            out.append((new, style))
-        return out, changed
+            # contract terms chosen in the form are set in bold, like the placeholders
+            pos = 0
+            for m in self.term_pattern.finditer(text):
+                out.append((text[pos:m.start()], style))
+                out.append((self.term_values[m.group(0)], "b"))
+                pos = m.end()
+                changed = True
+            out.append((text[pos:], style))
+        return [(t, st) for t, st in out if t], changed
 
     @staticmethod
     def _paragraph_runs(par: Paragraph):
@@ -712,6 +716,8 @@ class ContractGenerator:
             for side in ([s for s in line.spans if s.x0 < mid - 1],
                          [s for s in line.spans if s.x0 >= mid - 1]):
                 pieces, _ = self._substitute_runs([(s.text, s.style, s.color) for s in side])
+                if side and side[0].x0 >= mid - 1:     # Rishi Jobs column stays regular weight
+                    pieces = [(t, "n") for t, _ in pieces]
                 cells.append(pieces)
             rows.append(cells)
 

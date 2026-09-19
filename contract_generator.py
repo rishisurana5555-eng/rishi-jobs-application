@@ -27,6 +27,7 @@ BLACK = (0, 0, 0)
 LINE_GAP = 15.0                   # template leading (pt)
 BOTTOM_LIMIT = 785.0              # lowest baseline allowed above the "Page N" footer
 MIN_PARA_GAP = 17.0               # tightest paragraph spacing allowed when compressing
+TITLE_TOP_SPACE = LINE_GAP        # blank line above the agreement title on page 1
 
 # --------------------------------------------------------------------------- #
 # Business options
@@ -429,6 +430,9 @@ class ContractGenerator:
             else:
                 self._process_flow_page(page, lines)
 
+        for i in range(doc.page_count - 1):
+            self._move_orphan_heading(doc[i], doc[i + 1])
+
         doc.set_metadata({
             **doc.metadata,
             "title": f"Rishi Jobs - Placement Services Agreement - {details.company_name}",
@@ -441,6 +445,46 @@ class ContractGenerator:
         doc.save(buf, garbage=4, deflate=True)
         doc.close()
         return buf.getvalue()
+
+    # -- headings left alone at the bottom of a page ------------------------ #
+    def _move_orphan_heading(self, page: fitz.Page, next_page: fitz.Page):
+        """If a page ends with a section heading, move it to the top of the next page."""
+        lines = [l for l in extract_lines(page) if l.size > 9]
+        next_lines = [l for l in extract_lines(next_page) if l.size > 9]
+        if len(lines) < 2 or not next_lines:
+            return
+        body_size = min(l.size for l in lines)
+        heading = lines[-1]
+        if not (all(s.style == "b" for s in heading.spans) and heading.size > body_size + 0.5):
+            return
+        # spacing used under the other headings of the same style on this page
+        gaps = [lines[i + 1].y - l.y for i, l in enumerate(lines[:-1])
+                if abs(l.size - heading.size) < 0.1 and all(s.style == "b" for s in l.spans)]
+        gap = gaps[0] if gaps else heading.size + LINE_GAP
+
+        first = next_lines[0]
+        heading_y = first.bbox.y0 + (heading.y - heading.bbox.y0)
+        shift = heading_y + gap - first.y
+
+        page.add_redact_annot(fitz.Rect(heading.bbox.x0 - 1, heading.bbox.y0 + 2,
+                                        heading.bbox.x1 + 1, heading.bbox.y1 - 2), fill=False)
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                              graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                              text=fitz.PDF_REDACT_TEXT_REMOVE)
+
+        for l in next_lines:
+            next_page.add_redact_annot(fitz.Rect(l.bbox.x0 - 1, l.bbox.y0 + 3,
+                                                 l.bbox.x1 + 1, l.bbox.y1 - 3), fill=False)
+        next_page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                                   graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                                   text=fitz.PDF_REDACT_TEXT_REMOVE)
+
+        ts = Typesetter(self.fonts, min(l.x0 for l in next_lines), max(l.x1 for l in next_lines))
+        tw = fitz.TextWriter(next_page.rect)
+        ts.draw_original_line(tw, heading, heading_y)
+        for l in next_lines:
+            ts.draw_original_line(tw, l, l.y + shift)
+        tw.write_text(next_page, color=BLACK)
 
     # -- page classification ---------------------------------------------- #
     @staticmethod
@@ -531,11 +575,12 @@ class ContractGenerator:
         items.sort(key=lambda it: it[2])
 
         new_tops = []
-        shift_started = False
+        top_space = TITLE_TOP_SPACE if page.number == 0 else 0.0
+        shift_started = top_space > 0
         eligible = []
         for i, it in enumerate(items):
             if i == 0:
-                new_tops.append(it[2])
+                new_tops.append(it[2] + top_space)
             else:
                 prev = items[i - 1]
                 gap = it[2] - prev[3]
@@ -700,7 +745,7 @@ class ContractGenerator:
     # -- signature page ---------------------------------------------------- #
     SIG_TABLE_X = (57.6378, 297.6378, 537.6378)   # same column grid as the template's tables
     SIG_CELL_PAD = 8.0
-    SIG_SIGN_ROW = 55.0                           # blank space for signature & stamp
+    SIG_SIGN_ROW = 95.0                           # blank space for signature & stamp
 
     def _fill_signature_table(self, page, lines):
         """Re-lay the two signature blocks as a bordered two-column table."""

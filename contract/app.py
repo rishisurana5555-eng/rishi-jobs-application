@@ -23,7 +23,8 @@ FEE_TYPES = {
     "tiered_10": "Tiered:  8.33% up to ₹ 12,00,000 CTC   |10% above ₹ 12,00,000 CTC",
     "tiered_11": "Tiered:  8.33% up to ₹ 12,00,000 CTC   |11% above ₹ 12,00,000 CTC",
     "tiered_12": "Tiered:  8.33% up to ₹ 12,00,000 CTC   |12% above ₹ 12,00,000 CTC",
-    "flat": "Flat:  8.33% of Annual CTC",
+    "flat_8": "Flat:  8.33% of Annual CTC",
+    "flat_12": "Flat:  12% of Annual CTC",
 }
 
 st.set_page_config(page_title="Rishi Jobs | Contract Generator", page_icon="📄", layout="centered")

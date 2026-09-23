@@ -48,7 +48,8 @@ FEE_TYPES = {
     "tiered_10": "Tiered:  8.33% up to ₹ 12,00,000 CTC   |10% above ₹ 12,00,000 CTC",
     "tiered_11": "Tiered:  8.33% up to ₹ 12,00,000 CTC   |11% above ₹ 12,00,000 CTC",
     "tiered_12": "Tiered:  8.33% up to ₹ 12,00,000 CTC   |12% above ₹ 12,00,000 CTC",
-    "flat": "Flat:  8.33% of Annual CTC",
+    "flat_8": "Flat:  8.33% of Annual CTC",
+    "flat_12": "Flat:  12% of Annual CTC",
 }
 
 DEFAULT_SERVICE_DESCRIPTION = "Permanent Recruitment Services"

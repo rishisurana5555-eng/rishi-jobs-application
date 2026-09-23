@@ -40,7 +40,7 @@ Set `CONTRACT_API_URL` if the API runs somewhere else.
   "fee_type": "tiered_10"
 }
 ```
-`fee_type`: `tiered_10`, `tiered_11`, `tiered_12`, `flat`. Returns the PDF, or `422` with a list of validation errors.
+`fee_type`: `tiered_10`, `tiered_11`, `tiered_12`, `flat_8`, `flat_12`. Returns the PDF, or `422` with a list of validation errors.
 
 ## What gets filled
 - **[CITY] / [DATE]**: place and date of agreement (the date also goes in both signature blocks)
